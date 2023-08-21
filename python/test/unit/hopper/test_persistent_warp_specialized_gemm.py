@@ -702,10 +702,11 @@ def full_static_persistent_matmul_kernel(
                                  [4096, 1, 1024, False, False],
                                  [2048, 204, 1000, True, False],
                                  [16, 524288, 32, False, True],
+                                 [2048, 2048, 2048, False, True],
                              ]
                              for out_dtype in ['float16', 'float32']
                              for use_tma_store in [False, True]
-                             for enable_ws in [True]
+                             for enable_ws in [True, False]
                          ] + [
                              # softmax epilogue
                              (*shape_w_c, trans_a, trans_b, epilogue, out_dtype, use_tma_store, num_stages, enable_ws)

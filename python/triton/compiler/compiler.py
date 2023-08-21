@@ -116,6 +116,7 @@ def optimize_ttgir(mod, num_stages, num_warps, num_ctas, arch,
             num_stages, num_warps, arch)
         pm.add_tritongpu_wsmutex_pass(arch)
         pm.add_tritongpu_wsmaterialization_pass(arch)
+        pm.add_licm_pass()
         pm.add_cse_pass()
     else:
         pm.add_tritongpu_pipeline_pass(

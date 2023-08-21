@@ -325,6 +325,7 @@ class Mark:
         if print_data:
             print(bench.plot_name + ':')
             print(df)
+            df.to_csv("triton_warp_specialized_gemm.csv", float_format='%.3f', index=False)
         if save_path:
             df.to_csv(os.path.join(save_path, f"{bench.plot_name}.csv"), float_format='%.1f', index=False)
 
