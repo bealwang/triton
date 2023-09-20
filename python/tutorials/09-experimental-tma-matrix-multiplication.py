@@ -104,42 +104,29 @@ def static_persistent_matmul_kernel_hopper(
     num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
     num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
     num_tiles = num_pid_m * num_pid_n
-    num_pid_in_group = GROUP_SIZE_M * num_pid_n
-    group_id = start_pid // num_pid_in_group
-    first_pid_m = group_id * GROUP_SIZE_M
-    group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-    pre_pid_m = first_pid_m + ((start_pid % num_pid_in_group) % group_size_m)
-    pre_pid_n = (start_pid % num_pid_in_group) // group_size_m
 
-    pre_block_offset_m = pre_pid_m * BLOCK_SIZE_M
-    pre_block_offset_n = pre_pid_n * BLOCK_SIZE_N
     a_tile_ptr = tl.make_block_ptr(base=a_ptr, shape=(M, K), strides=(stride_am, stride_ak),
-                                   offsets=(pre_block_offset_m, 0), block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_K), order=(A_ORDER_0, A_ORDER_1))
+                                   offsets=(0, 0), block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_K), order=(A_ORDER_0, A_ORDER_1))
     b_tile_ptr = tl.make_block_ptr(base=b_ptr, shape=(K, N), strides=(stride_bk, stride_bn),
-                                   offsets=(0, pre_block_offset_n), block_shape=(BLOCK_SIZE_K, BLOCK_SIZE_N), order=(B_ORDER_0, B_ORDER_1))
+                                   offsets=(0, 0), block_shape=(BLOCK_SIZE_K, BLOCK_SIZE_N), order=(B_ORDER_0, B_ORDER_1))
     z_block_ptr = tl.make_block_ptr(base=z_ptr, shape=(M, N), strides=(stride_zm, stride_zn),
-                                    offsets=(pre_block_offset_m, pre_block_offset_n), block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N), order=(1, 0))
+                                    offsets=(0, 0), block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N), order=(1, 0))
 
     for tile_id in range(start_pid, num_tiles, NUM_SM):
-        group_id = tile_id // num_pid_in_group
-        first_pid_m = group_id * GROUP_SIZE_M
-        group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
-        pid_m = first_pid_m + ((tile_id % num_pid_in_group) % group_size_m)
-        pid_n = (tile_id % num_pid_in_group) // group_size_m
+        pid_m = tile_id % num_pid_m
+        pid_n = tile_id // num_pid_m
         block_offset_m = pid_m * BLOCK_SIZE_M
         block_offset_n = pid_n * BLOCK_SIZE_N
 
-        a_tile_ptr = tl.advance(a_tile_ptr, [(pid_m - pre_pid_m) * BLOCK_SIZE_M, 0])
-        b_tile_ptr = tl.advance(b_tile_ptr, [0, (pid_n - pre_pid_n) * BLOCK_SIZE_N])
+        temp_a_tile_ptr = tl.advance(a_tile_ptr, [block_offset_m, 0])
+        temp_b_tile_ptr = tl.advance(b_tile_ptr, [0, block_offset_n])
         z = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
         for k in range(0, K, BLOCK_SIZE_K):
-            a = tl.load(a_tile_ptr, boundary_check=(0, 1))
-            b = tl.load(b_tile_ptr, boundary_check=(0, 1))
+            a = tl.load(temp_a_tile_ptr, boundary_check=(0, 1))
+            b = tl.load(temp_b_tile_ptr, boundary_check=(0, 1))
             z += tl.dot(a, b)
-            a_tile_ptr = tl.advance(a_tile_ptr, [0, BLOCK_SIZE_K])
-            b_tile_ptr = tl.advance(b_tile_ptr, [BLOCK_SIZE_K, 0])
-        a_tile_ptr = tl.advance(a_tile_ptr, [0, -tl.cdiv(K, BLOCK_SIZE_K) * BLOCK_SIZE_K])
-        b_tile_ptr = tl.advance(b_tile_ptr, [-tl.cdiv(K, BLOCK_SIZE_K) * BLOCK_SIZE_K, 0])
+            temp_a_tile_ptr = tl.advance(temp_a_tile_ptr, [0, BLOCK_SIZE_K])
+            temp_b_tile_ptr = tl.advance(temp_b_tile_ptr, [BLOCK_SIZE_K, 0])
 
         if ADD_MATRIX:
             offs_m = block_offset_m + tl.arange(0, BLOCK_SIZE_M)
@@ -155,11 +142,8 @@ def static_persistent_matmul_kernel_hopper(
             z = tl.maximum(z, 0)
 
         z = z.to(tl.float16)
-        z_block_ptr = tl.advance(z_block_ptr, [(pid_m - pre_pid_m) * BLOCK_SIZE_M, (pid_n - pre_pid_n) * BLOCK_SIZE_N])
-        tl.store(z_block_ptr, z, boundary_check=(0, 1))
-
-        pre_pid_m = pid_m
-        pre_pid_n = pid_n
+        temp_z_block_ptr = tl.advance(z_block_ptr, [block_offset_m, block_offset_n])
+        tl.store(temp_z_block_ptr, z, boundary_check=(0, 1))
 
 
 # `triton.jit`'ed functions can be auto-tuned by using the `triton.autotune` decorator, which consumes:
