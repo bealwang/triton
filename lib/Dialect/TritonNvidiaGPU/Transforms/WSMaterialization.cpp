@@ -155,14 +155,13 @@ Value getMBarrierPhaseBit(OpBuilder &builder, Operation *op,
   }
 
   unsigned numArgs = forOp.getBody()->getNumArguments();
-  assert(numArgs > 4 && "Unexpected number of arguments");
-  unsigned phaseIdx;
-  if (emptyBarrier) {
-    phaseIdx = numArgs - 4;
-  } else {
-    phaseIdx = numArgs - 2;
+  assert(numArgs > 2 && "Unexpected number of arguments");
+  Value curPhase = forOp.getBody()->getArgument(numArgs - 2);
+  if (!emptyBarrier) {
+    Value _1_1b = builder.create<arith::ConstantIntOp>(loc, 1, 1);
+    curPhase = builder.create<mlir::arith::XOrIOp>(loc, curPhase, _1_1b);
   }
-  return forOp.getBody()->getArgument(phaseIdx);
+  return curPhase;
 }
 
 int getTxBytes(ttng::InsertSliceAsyncV2Op load) {

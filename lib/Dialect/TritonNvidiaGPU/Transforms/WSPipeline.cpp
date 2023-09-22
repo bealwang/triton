@@ -215,12 +215,7 @@ scf::ForOp appendPipelineIdx(scf::ForOp forOp, int numStages,
       builder.createWithAgentIds<arith::ConstantIntOp>(loc, numStages, 32);
 
   // 0. Append pipelineIdx to block arguments
-  Value emptyPhase, emptyIdx, pipelinePhase;
-  emptyPhase =
-      body->insertArgument(body->getNumArguments(), builder.getI1Type(), loc);
-  emptyIdx =
-      body->insertArgument(body->getNumArguments(), builder.getI32Type(), loc);
-  pipelinePhase =
+  Value phase =
       body->insertArgument(body->getNumArguments(), builder.getI1Type(), loc);
   Value pipelineIdx =
       body->insertArgument(body->getNumArguments(), builder.getI32Type(), loc);
@@ -235,14 +230,6 @@ scf::ForOp appendPipelineIdx(scf::ForOp forOp, int numStages,
   Value zero = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 0, 32);
   Value _1_1b = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 1, 1);
   // generate index for next iter
-  Value nextEmptyIdx =
-      builder.createWithAgentIds<arith::AddIOp>(loc, emptyIdx, one);
-  Value emptyGECond = builder.createWithAgentIds<arith::CmpIOp>(
-      loc, arith::CmpIPredicate::uge, nextEmptyIdx, numStagesVal);
-  Value emptyLTCond = builder.createWithAgentIds<arith::CmpIOp>(
-      loc, arith::CmpIPredicate::ult, nextEmptyIdx, numStagesVal);
-  nextEmptyIdx = builder.createWithAgentIds<mlir::arith::SelectOp>(
-      loc, emptyGECond, zero, nextEmptyIdx);
   Value nextPipelineIdx =
       builder.createWithAgentIds<arith::AddIOp>(loc, pipelineIdx, one);
   Value pipelineGECond = builder.createWithAgentIds<arith::CmpIOp>(
@@ -253,30 +240,17 @@ scf::ForOp appendPipelineIdx(scf::ForOp forOp, int numStages,
       loc, pipelineGECond, zero, nextPipelineIdx);
   // generate phase for next iter
   Value flipPhase =
-      builder.createWithAgentIds<mlir::arith::XOrIOp>(loc, emptyPhase, _1_1b);
+      builder.createWithAgentIds<mlir::arith::XOrIOp>(loc, phase, _1_1b);
   Value cond0 = builder.createWithAgentIds<mlir::arith::AndIOp>(
       loc, pipelineGECond, flipPhase);
   Value cond1 = builder.createWithAgentIds<mlir::arith::AndIOp>(
-      loc, pipelineLTCond, emptyPhase);
-  Value nextEmptyPhase =
-      builder.createWithAgentIds<mlir::arith::OrIOp>(loc, cond0, cond1);
-  flipPhase = builder.createWithAgentIds<mlir::arith::XOrIOp>(
-      loc, pipelinePhase, _1_1b);
-  cond0 = builder.createWithAgentIds<mlir::arith::AndIOp>(loc, pipelineGECond,
-                                                          flipPhase);
-  cond1 = builder.createWithAgentIds<mlir::arith::AndIOp>(loc, pipelineLTCond,
-                                                          pipelinePhase);
-  Value nextPipelinePhase =
+      loc, pipelineLTCond, phase);
+  Value nextPhase =
       builder.createWithAgentIds<mlir::arith::OrIOp>(loc, cond0, cond1);
 
   // 2. Append pipelineIdx to yield operands
-  if (parentForOp) {
-    yieldOp->insertOperands(
-        yieldOp.getNumOperands(),
-        {nextEmptyPhase, nextEmptyIdx, nextPipelinePhase, nextPipelineIdx});
-  } else {
-    yieldOp->insertOperands(yieldOp.getNumOperands(), {nextPipelineIdx});
-  }
+  yieldOp->insertOperands(yieldOp.getNumOperands(),
+                          {nextPhase, nextPipelineIdx});
 
   // 3. create newLoopArgs
   SmallVector<Value> newLoopArgs;
@@ -284,10 +258,8 @@ scf::ForOp appendPipelineIdx(scf::ForOp forOp, int numStages,
     newLoopArgs.push_back(operand);
 
   builder.setInsertionPoint(forOp);
-  Value initPipelineIdx, initEmptyIdx;
+  Value initPipelineIdx, initEmptyIdx, initPhase;
   zero = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 0, 32);
-  Value minusOne =
-      builder.createWithAgentIds<arith::ConstantIntOp>(loc, -1, 32);
   if (parentForOp) {
     // Make sure prior pipelineIdx is inserted in the end of parentForOp
     initPipelineIdx = parentForOp.getBody()->getArguments().back();
@@ -307,29 +279,18 @@ scf::ForOp appendPipelineIdx(scf::ForOp forOp, int numStages,
         loc, initPipelineIdx, numSteps);
     initPipelineIdx = builder.createWithAgentIds<arith::RemUIOp>(
         loc, pipelineIdx, numStagesVal);
-    initEmptyIdx =
-        builder.createWithAgentIds<arith::SubIOp>(loc, initPipelineIdx, one);
     pipelineIdx = builder.createWithAgentIds<arith::DivUIOp>(loc, pipelineIdx,
                                                              numStagesVal);
     pipelineIdx =
         builder.createWithAgentIds<arith::RemUIOp>(loc, pipelineIdx, two);
-    flipPhase = builder.createWithAgentIds<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::eq, pipelineIdx, one);
+    initPhase = builder.createWithAgentIds<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, pipelineIdx, zero);
   } else {
     initPipelineIdx = zero;
-    initEmptyIdx = minusOne;
+    initPhase = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 1, 1);
   }
   // full barrier phase init to 1 and empty barrier phase init to 0
-  Value initPipelinePhase =
-      builder.createWithAgentIds<arith::ConstantIntOp>(loc, 0, 1);
-  Value initEmptyPhase =
-      builder.createWithAgentIds<arith::ConstantIntOp>(loc, 1, 1);
-  initPipelinePhase = builder.createWithAgentIds<arith::XOrIOp>(
-      loc, initPipelinePhase, flipPhase);
-  initEmptyPhase =
-      builder.createWithAgentIds<arith::XOrIOp>(loc, initEmptyPhase, flipPhase);
-  newLoopArgs.append(
-      {initEmptyPhase, initEmptyIdx, initPipelinePhase, initPipelineIdx});
+  newLoopArgs.append({initPhase, initPipelineIdx});
 
   // 4. Create newForOp and take the region of forOp
   auto newForOp = builder.createWithAgentIds<scf::ForOp>(
@@ -892,8 +853,18 @@ void buildAsyncComm(const DenseMap<Operation *, SmallVector<Channel *>> &map,
           builder.createWithAgentIds<scf::IfOp>(loc, ArrayRef<Type>{}, cond,
                                                 /*hasElse*/ false);
       builder.setInsertionPointToStart(ifOp.thenBlock());
-      unsigned numArgs = forOp.getBody()->getNumArguments();
-      Value consumerReleaseIdx = forOp.getBody()->getArgument(numArgs - 3);
+      Value consumerReleaseIdx = forOp.getBody()->getArguments().back();
+      Value zero = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 0, 32);
+      Value one = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 1, 32);
+      Value lastStage = builder.createWithAgentIds<arith::ConstantIntOp>(
+          loc, numStages - 1, 32);
+      Value consumerReleaseIdxMinusOne =
+          builder.createWithAgentIds<arith::SubIOp>(loc, consumerReleaseIdx,
+                                                    one);
+      cond = builder.createWithAgentIds<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, consumerReleaseIdx, zero);
+      consumerReleaseIdx = builder.createWithAgentIds<arith::SelectOp>(
+          loc, cond, lastStage, consumerReleaseIdxMinusOne);
       builder.createWithAgentIds<ttng::ConsumerReleaseOp>(loc, token,
                                                           consumerReleaseIdx);
       setAgentIds(ifOp.thenYield().getOperation(), agentIds);
@@ -904,8 +875,17 @@ void buildAsyncComm(const DenseMap<Operation *, SmallVector<Channel *>> &map,
                                                                 0);
 
       // 3. insert ConsumerReleaseOp for outstanding DotAsyncOps
-      unsigned numResults = forOp.getNumResults();
-      consumerReleaseIdx = forOp.getResult(numResults - 3);
+      zero = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 0, 32);
+      one = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 1, 32);
+      lastStage = builder.createWithAgentIds<arith::ConstantIntOp>(
+          loc, numStages - 1, 32);
+      consumerReleaseIdx = forOp.getResults().back();
+      consumerReleaseIdxMinusOne = builder.createWithAgentIds<arith::SubIOp>(
+          loc, consumerReleaseIdx, one);
+      cond = builder.createWithAgentIds<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, consumerReleaseIdx, zero);
+      consumerReleaseIdx = builder.createWithAgentIds<arith::SelectOp>(
+          loc, cond, lastStage, consumerReleaseIdxMinusOne);
       builder.createWithAgentIds<ttng::ConsumerReleaseOp>(loc, token,
                                                           consumerReleaseIdx);
       dotOp->erase();
