@@ -223,7 +223,8 @@ scf::ForOp appendPipelineIdx(scf::ForOp forOp, int numStages,
   // 1. prepare index and phase for next iteration
   // nextIdx = curIdx + 1
   // nextPhase = ((nextIdx < numStages && curPhase) || (nextIdx >= numStages &&
-  // curPhase^1)) nextIdx = nextIdx >= numStages ? 0 : nextIdx
+  // curPhase^1))
+  // nextIdx = nextIdx >= numStages ? 0 : nextIdx
   auto yieldOp = llvm::cast<scf::YieldOp>(body->getTerminator());
   builder.setInsertionPoint(yieldOp);
   Value one = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 1, 32);
@@ -273,21 +274,22 @@ scf::ForOp appendPipelineIdx(scf::ForOp forOp, int numStages,
     numSteps = builder.createWithAgentIds<arith::DivUIOp>(loc, numSteps,
                                                           forOp.getStep());
     // initPipelineIdx = (parentForOp.pipelineIdx * numSteps) % numStages
-    // initEmptyIdx = initPipelineIdx - 1 if initPipelineIdx != 0 else numStages
-    // - 1
-    Value pipelineIdx = builder.createWithAgentIds<arith::MulIOp>(
+    // initPhase = ((parentForOp.pipelineIdx * numSteps) / numStages) & 1
+    initPipelineIdx = builder.createWithAgentIds<arith::MulIOp>(
         loc, initPipelineIdx, numSteps);
-    initPipelineIdx = builder.createWithAgentIds<arith::RemUIOp>(
-        loc, pipelineIdx, numStagesVal);
-    pipelineIdx = builder.createWithAgentIds<arith::DivUIOp>(loc, pipelineIdx,
-                                                             numStagesVal);
+    Value pipelineIdx = builder.createWithAgentIds<arith::DivUIOp>(
+        loc, initPipelineIdx, numStagesVal);
+    initPipelineIdx = builder.createWithAgentIds<arith::SubIOp>(
+        loc, initPipelineIdx,
+        builder.createWithAgentIds<arith::MulIOp>(loc, pipelineIdx,
+                                                  numStagesVal));
     pipelineIdx =
-        builder.createWithAgentIds<arith::RemUIOp>(loc, pipelineIdx, two);
-    initPhase = builder.createWithAgentIds<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::eq, pipelineIdx, zero);
+        builder.createWithAgentIds<arith::AndIOp>(loc, pipelineIdx, one);
+    initPhase = builder.createWithAgentIds<arith::TruncIOp>(
+        loc, builder.getI1Type(), pipelineIdx);
   } else {
     initPipelineIdx = zero;
-    initPhase = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 1, 1);
+    initPhase = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 0, 1);
   }
   // full barrier phase init to 1 and empty barrier phase init to 0
   newLoopArgs.append({initPhase, initPipelineIdx});

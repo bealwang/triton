@@ -157,7 +157,7 @@ Value getMBarrierPhaseBit(OpBuilder &builder, Operation *op,
   unsigned numArgs = forOp.getBody()->getNumArguments();
   assert(numArgs > 2 && "Unexpected number of arguments");
   Value curPhase = forOp.getBody()->getArgument(numArgs - 2);
-  if (!emptyBarrier) {
+  if (emptyBarrier) {
     Value _1_1b = builder.create<arith::ConstantIntOp>(loc, 1, 1);
     curPhase = builder.create<mlir::arith::XOrIOp>(loc, curPhase, _1_1b);
   }
