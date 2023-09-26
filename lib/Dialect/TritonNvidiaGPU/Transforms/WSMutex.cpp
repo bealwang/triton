@@ -265,21 +265,19 @@ void mutexSync(ModuleOp &mod, scf::IfOp &ifOp, scf::ForOp &persistentForOp,
   // consumerReleaseOp.
   for (int i = 0; i < numRoles; ++i) {
     Operation *lockOp = lockLocs[i];
-    auto filter = [&](Operation *op) {
-      return op->getBlock() == lockOp->getBlock();
-    };
     if (isa<scf::ForOp>(lockOp)) {
       Operation *loc;
       unsigned numOutstandingConsumerRelease = 0;
       for (auto v : lockOp->getResults()) {
         SetVector<Operation *> slices;
-        mlir::getForwardSlice(v, &slices, {filter});
+        mlir::getForwardSlice(v, &slices);
         auto iter = llvm::find_if(slices, [](Operation *op) {
-          return isa<triton::nvidia_gpu::ConsumerReleaseOp>(op);
+          return isa<triton::nvidia_gpu::ConsumerReleaseOp>(op) &&
+                 isa<scf::IfOp>(op->getParentOp());
         });
         if (iter != slices.end()) {
           numOutstandingConsumerRelease++;
-          loc = *iter;
+          loc = (*iter)->getParentOp();
         }
       }
       assert(numOutstandingConsumerRelease == 1 &&

@@ -854,6 +854,7 @@ void buildAsyncComm(const DenseMap<Operation *, SmallVector<Channel *>> &map,
       auto ifOp =
           builder.createWithAgentIds<scf::IfOp>(loc, ArrayRef<Type>{}, cond,
                                                 /*hasElse*/ false);
+      setAgentIds(ifOp.thenYield().getOperation(), agentIds);
       builder.setInsertionPointToStart(ifOp.thenBlock());
       Value consumerReleaseIdx = forOp.getBody()->getArguments().back();
       Value zero = builder.createWithAgentIds<arith::ConstantIntOp>(loc, 0, 32);
@@ -869,10 +870,21 @@ void buildAsyncComm(const DenseMap<Operation *, SmallVector<Channel *>> &map,
           loc, cond, lastStage, consumerReleaseIdxMinusOne);
       builder.createWithAgentIds<ttng::ConsumerReleaseOp>(loc, token,
                                                           consumerReleaseIdx);
-      setAgentIds(ifOp.thenYield().getOperation(), agentIds);
 
       // 2. If there's any outstanding DotAsyncOps, we need to wait for them.
       builder.setInsertionPointAfter(forOp);
+      Value loopNotEmpty = builder.createWithAgentIds<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::slt, forOp.getLowerBound(),
+          forOp.getUpperBound());
+      // TODO[goostavz]: it's a workaround to put the DotWaitOp in an IfOp for
+      // a bug in ptxas which mistakenly analysis the control flow and turn the
+      // GMMA into synchronuous implementation for safety. Remove this If once
+      // the bug is fixed.
+      ifOp = builder.createWithAgentIds<scf::IfOp>(loc, ArrayRef<Type>{},
+                                                   loopNotEmpty,
+                                                   /*hasElse*/ false);
+      setAgentIds(ifOp.thenYield().getOperation(), agentIds);
+      builder.setInsertionPointToStart(ifOp.thenBlock());
       builder.createWithAgentIds<triton::nvidia_gpu::DotWaitOp>(forOp.getLoc(),
                                                                 0);
 
